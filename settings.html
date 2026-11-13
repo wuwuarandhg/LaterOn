@@ -152,6 +152,36 @@
             <button id="wipeBtn" class="setting-action danger" type="button" data-i18n="wipeAction">清空</button>
           </div>
         </section>
+
+        <section class="settings-group">
+          <h2 data-i18n="webdavSync">WebDAV 同步</h2>
+          <p class="setting-note" data-i18n="webdavSyncHint">手动把网页、项目、排序和上传封面同步到你自己的 WebDAV 服务器。同步以本机数据覆盖远端文件。</p>
+          <div class="setting-row">
+            <div class="setting-label"><strong data-i18n="webdavUrlLabel">服务器地址</strong><span data-i18n="webdavUrlHint">WebDAV 根目录，例如 Nextcloud 的 https://…/remote.php/dav/files/用户名/</span></div>
+            <input id="webdavUrl" class="setting-input" type="url" spellcheck="false" autocomplete="off" data-webdav="url" data-i18n-placeholder="webdavUrlPlaceholder" placeholder="https://dav.example.com/remote.php/dav/files/用户名/" />
+          </div>
+          <div class="setting-row">
+            <div class="setting-label"><strong data-i18n="webdavUserLabel">用户名</strong><span data-i18n="webdavUserHint">WebDAV 账号；服务器允许匿名时可留空</span></div>
+            <input id="webdavUser" class="setting-input" type="text" spellcheck="false" autocomplete="username" data-webdav="username" />
+          </div>
+          <div class="setting-row">
+            <div class="setting-label"><strong data-i18n="webdavPasswordLabel">密码或应用密码</strong><span data-i18n="webdavPasswordHint">只保存在本机浏览器；坚果云、Nextcloud 建议使用应用密码</span></div>
+            <input id="webdavPassword" class="setting-input" type="password" autocomplete="current-password" data-webdav="password" />
+          </div>
+          <div class="setting-row">
+            <div class="setting-label"><strong data-i18n="webdavPathLabel">远端文件</strong><span data-i18n="webdavPathHint">相对服务器地址的文件路径，目录会自动创建</span></div>
+            <input id="webdavPath" class="setting-input" type="text" spellcheck="false" autocomplete="off" data-webdav="path" data-i18n-placeholder="webdavPathPlaceholder" placeholder="LaterOn/lateron-sync.json" />
+          </div>
+          <div class="setting-row">
+            <div class="setting-label"><strong data-i18n="webdavActions">操作</strong><span id="webdavStatus" class="setting-status" data-i18n="webdavNeverSynced">还没有同步过</span></div>
+            <div class="data-actions">
+              <button id="webdavTest" class="setting-action" type="button" data-i18n="webdavTest">测试连接</button>
+              <button id="webdavUpload" class="setting-action" type="button" data-i18n="webdavUpload">上传到 WebDAV</button>
+              <button id="webdavRestore" class="setting-action" type="button" data-i18n="webdavRestore">从 WebDAV 恢复</button>
+            </div>
+          </div>
+          <p class="setting-note" data-i18n="webdavPlaintextNote">远端文件是明文 JSON，包含网页标题、网址和封面；请使用 HTTPS，并妥善保管 WebDAV 账号。</p>
+        </section>
       </main>
     </div>
     <script src="settings.js"></script>

@@ -5,6 +5,10 @@ const t = (...args) => (window.LaterOnI18n ? window.LaterOnI18n.t(...args) : Str
 // 当前是不是英文界面（影响标点全角/半角和日期格式这类细节）。
 const isEn = () => document.documentElement.lang === "en";
 
+// WebDAV 同步：配置与同步状态共用这一个键；背景脚本负责真正的网络请求和状态写入。
+const WEBDAV_KEY = "laterOnWebdav";
+const WEBDAV_DEFAULT_PATH = "LaterOn/lateron-sync.json";
+
 // 「已读收藏自动清除」的天数：最短 30 天、最长 180 天，默认 30 天。
 // 用户手打的数字可能是 5 或 999，这里统一夹回合法区间再存。
 const MIN_CLEAN_DAYS = 30;
@@ -222,6 +226,9 @@ async function init() {
       message: t("wipeDoneMsg")
     });
   });
+
+  // 同步配置最后再读：即使 storage 慢，返回/导出/清空这些按钮也已经可用。
+  await initWebdav();
 }
 
 // ── 快捷键自检 ──────────────────────────────────────────────
@@ -412,6 +419,218 @@ function isImportableItem(item) {
   } catch {
     return false;
   }
+}
+
+// ── WebDAV 同步 ──────────────────────────────────────────────
+const WEBDAV_FIELDS = {
+  url: "#webdavUrl",
+  username: "#webdavUser",
+  password: "#webdavPassword",
+  path: "#webdavPath"
+};
+const WEBDAV_ERROR_KEYS = {
+  auth: "webdavErrorAuth",
+  forbidden: "webdavErrorForbidden",
+  network: "webdavErrorNetwork",
+  timeout: "webdavErrorTimeout",
+  "no-file": "webdavErrorNoFile",
+  "invalid-file": "webdavErrorInvalidFile",
+  "invalid-config": "webdavErrorConfig",
+  "invalid-url": "webdavErrorUrl",
+  "invalid-path": "webdavErrorPath",
+  "parent-missing": "webdavErrorParentMissing",
+  http: "webdavErrorHttp"
+};
+let webdavBusy = false;
+
+function readWebdavForm() {
+  return {
+    url: (document.querySelector(WEBDAV_FIELDS.url)?.value || "").trim(),
+    username: document.querySelector(WEBDAV_FIELDS.username)?.value || "",
+    password: document.querySelector(WEBDAV_FIELDS.password)?.value || "",
+    path: (document.querySelector(WEBDAV_FIELDS.path)?.value || "").trim() || WEBDAV_DEFAULT_PATH
+  };
+}
+
+async function saveWebdavForm() {
+  const stored = await chrome.storage.local.get(WEBDAV_KEY);
+  const current = stored[WEBDAV_KEY] || {};
+  const next = { ...current, ...readWebdavForm() };
+  await chrome.storage.local.set({ [WEBDAV_KEY]: next });
+  return next;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (!value) return t("webdavUnknownSize");
+  if (value >= 1024 * 1024) return t("webdavSizeMB", { n: (value / (1024 * 1024)).toFixed(1) });
+  return t("webdavSizeKB", { n: Math.max(1, Math.round(value / 1024)) });
+}
+
+function formatRemoteTime(timestamp) {
+  return timestamp
+    ? new Date(timestamp).toLocaleString(isEn() ? "en-US" : "zh-CN")
+    : t("webdavUnknownTime");
+}
+
+function webdavErrorMessage(result) {
+  const key = WEBDAV_ERROR_KEYS[result?.code]
+    || (result?.status ? "webdavErrorHttp" : "webdavErrorUnknown");
+  return t(key, { status: result?.status || 0, message: result?.error || "" });
+}
+
+function setWebdavStatus(text, tone = "") {
+  const element = document.querySelector("#webdavStatus");
+  if (!element) return;
+  element.textContent = text;
+  element.classList.toggle("is-error", tone === "error");
+  element.classList.toggle("is-ok", tone === "ok");
+}
+
+function renderWebdavStatus(config = {}) {
+  const parts = [];
+  parts.push(config.lastSyncAt
+    ? t("webdavLastSync", { time: relativeTime(config.lastSyncAt) })
+    : t("webdavNeverSynced"));
+  if (config.lastRestoreAt) parts.push(t("webdavLastRestore", { time: relativeTime(config.lastRestoreAt) }));
+  if (config.lastError) {
+    const message = config.lastErrorCode
+      ? webdavErrorMessage({ code: config.lastErrorCode, status: config.lastErrorStatus, error: config.lastError })
+      : config.lastError;
+    parts.push(t("webdavLastError", { msg: message }));
+  }
+  setWebdavStatus(parts.join(" · "), config.lastError ? "error" : "");
+}
+
+function setWebdavBusy(busy, progressKey = "") {
+  webdavBusy = busy;
+  document.querySelectorAll("#webdavTest, #webdavUpload, #webdavRestore").forEach((button) => {
+    button.disabled = busy;
+  });
+  if (busy && progressKey) setWebdavStatus(t(progressKey));
+}
+
+async function refreshWebdavStatus() {
+  const stored = await chrome.storage.local.get(WEBDAV_KEY);
+  renderWebdavStatus(stored[WEBDAV_KEY] || {});
+}
+
+function hasWebdavUrl() {
+  if ((document.querySelector(WEBDAV_FIELDS.url)?.value || "").trim()) return true;
+  setWebdavStatus(t("webdavErrorConfig"), "error");
+  document.querySelector(WEBDAV_FIELDS.url)?.focus();
+  return false;
+}
+
+async function sendWebdavAction(type, progressKey) {
+  let config;
+  try {
+    config = await saveWebdavForm();
+  } catch {
+    setWebdavStatus(t("webdavErrorUnknown"), "error");
+    return { ok: false, code: "unknown" };
+  }
+  if (!config.url) {
+    setWebdavStatus(t("webdavErrorConfig"), "error");
+    document.querySelector(WEBDAV_FIELDS.url)?.focus();
+    return { ok: false, code: "invalid-config" };
+  }
+  setWebdavBusy(true, progressKey);
+  try {
+    const response = await chrome.runtime.sendMessage({ type });
+    if (!response) throw new Error(t("webdavErrorNetwork"));
+    return response;
+  } catch (error) {
+    return { ok: false, code: "network", error: String(error?.message || error) };
+  } finally {
+    setWebdavBusy(false);
+    await refreshWebdavStatus().catch(() => {});
+  }
+}
+
+async function initWebdav() {
+  const stored = await chrome.storage.local.get(WEBDAV_KEY);
+  const config = stored[WEBDAV_KEY] || {};
+  const urlEl = document.querySelector(WEBDAV_FIELDS.url);
+  const userEl = document.querySelector(WEBDAV_FIELDS.username);
+  const passEl = document.querySelector(WEBDAV_FIELDS.password);
+  const pathEl = document.querySelector(WEBDAV_FIELDS.path);
+  if (!urlEl || !userEl || !passEl || !pathEl) return;
+
+  urlEl.value = config.url || "";
+  userEl.value = config.username || "";
+  passEl.value = config.password || "";
+  pathEl.value = config.path || WEBDAV_DEFAULT_PATH;
+  renderWebdavStatus(config);
+
+  // 失焦即保存；只写表单字段，保留背景脚本维护的 lastSyncAt / lastError 等状态。
+  document.querySelectorAll("[data-webdav]").forEach((element) => {
+    element.addEventListener("change", () => { saveWebdavForm().catch(() => {}); });
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[WEBDAV_KEY]) return;
+    renderWebdavStatus(changes[WEBDAV_KEY].newValue || {});
+  });
+
+  document.querySelector("#webdavTest").addEventListener("click", async () => {
+    if (webdavBusy) return;
+    const result = await sendWebdavAction("WEBDAV_TEST", "webdavTesting");
+    if (!result.ok) {
+      setWebdavStatus(webdavErrorMessage(result), "error");
+      return;
+    }
+    if (result.remoteExists) {
+      setWebdavStatus(t("webdavTestOkFile", {
+        size: formatBytes(result.bytes),
+        time: formatRemoteTime(result.modifiedAt)
+      }), "ok");
+    } else {
+      setWebdavStatus(t("webdavTestOk"), "ok");
+    }
+  });
+
+  document.querySelector("#webdavUpload").addEventListener("click", async () => {
+    if (webdavBusy) return;
+    if (!hasWebdavUrl()) return;
+    const items = (await chrome.storage.local.get("laterOnItems")).laterOnItems || [];
+    const confirmed = await LaterOnDialog.confirm({
+      tone: "danger",
+      title: t("webdavUploadConfirmTitle"),
+      message: t("webdavUploadConfirmMsg", { n: items.length }),
+      confirmText: t("webdavUpload")
+    });
+    if (!confirmed) return;
+    const result = await sendWebdavAction("WEBDAV_UPLOAD", "webdavUploading");
+    if (!result.ok) {
+      setWebdavStatus(webdavErrorMessage(result), "error");
+      return;
+    }
+    const summary = t("webdavUploadOk", { n: result.items, size: formatBytes(result.bytes) });
+    setWebdavStatus(summary, "ok");
+    await LaterOnDialog.alert({ tone: "success", title: t("webdavUploadOkTitle"), message: summary });
+  });
+
+  document.querySelector("#webdavRestore").addEventListener("click", async () => {
+    if (webdavBusy) return;
+    if (!hasWebdavUrl()) return;
+    const confirmed = await LaterOnDialog.confirm({
+      tone: "danger",
+      title: t("webdavRestoreConfirmTitle"),
+      message: t("webdavRestoreConfirmMsg"),
+      confirmText: t("webdavRestore")
+    });
+    if (!confirmed) return;
+    const result = await sendWebdavAction("WEBDAV_RESTORE", "webdavRestoring");
+    if (!result.ok) {
+      setWebdavStatus(webdavErrorMessage(result), "error");
+      return;
+    }
+    const summary = t("webdavRestoreOk", { n: result.items, p: result.projects });
+    setWebdavStatus(summary, "ok");
+    // 侧栏的「秒开快照」和 chrome.storage 同源：恢复后清掉它，避免下次打开先闪一屏旧数据。
+    try { localStorage.removeItem("laterOnPanelCache"); } catch { /* 清缓存失败不影响恢复结果 */ }
+    await LaterOnDialog.alert({ tone: "success", title: t("webdavRestoreOkTitle"), message: summary });
+  });
 }
 
 init();

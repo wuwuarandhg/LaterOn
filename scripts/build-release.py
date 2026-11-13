@@ -50,6 +50,7 @@ RUNTIME_FILES = (
     "theme.js",
     "translation.css",
     "url-utils.js",
+    "webdav-sync.js",
 )
 RUNTIME_DIRS = ("_locales",)
 

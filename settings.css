@@ -117,6 +117,21 @@ body {
 }
 .setting-number:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* WebDAV 同步：地址 / 账号 / 密码 / 路径都是普通文本输入框，宽度跟设置行对齐。 */
+.setting-input {
+  width: min(320px, 100%); flex: none;
+  border: 1px solid var(--hairline-2); border-radius: 12px;
+  padding: 10px 12px; background: var(--field); color: var(--field-text);
+  font-family: inherit; font-size: 13px;
+}
+.setting-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.setting-status { font-variant-numeric: tabular-nums; }
+.setting-status.is-error { color: #df4c31; }
+.setting-status.is-ok { color: var(--ink); }
+@media (max-width: 620px) {
+  .setting-row > .setting-input { width: 100%; }
+}
+
 .setting-action { border: 1px solid var(--hairline-2); border-radius: 12px; padding: 9px 16px; background: var(--field); color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; transition: background .15s, border-color .15s; }
 .setting-action:hover { background: var(--btn-soft); }
 .setting-action.danger { color: #df4c31; border-color: rgba(223,76,49,.3); background: var(--accent-soft); }
